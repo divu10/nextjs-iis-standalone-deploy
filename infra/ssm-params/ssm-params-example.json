@@ -1,0 +1,17 @@
+[
+  {
+    "Name": "/vmsqa/frontend/DB_CONNECTION",
+    "Type": "SecureString",
+    "Value": "your-db-connection-string"
+  },
+  {
+    "Name": "/vmsqa/frontend/API_KEY",
+    "Type": "SecureString",
+    "Value": "xxxxxxxx"
+  },
+  {
+    "Name": "/vmsqa/frontend/APP_ENV",
+    "Type": "String",
+    "Value": "qa"
+  }
+]
