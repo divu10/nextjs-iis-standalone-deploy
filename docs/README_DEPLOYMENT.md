@@ -43,14 +43,3 @@
 
 ## 🧩 Troubleshooting
 See [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
-# 🧰 Troubleshooting Guide
-
-## ❌ 1. 502 or 500 Error in Browser
-**Cause:** IIS rewrite misconfiguration  
-**Fix:**
-- Verify ARR and URL Rewrite are installed.
-- Ensure target URL points to `http://localhost:3000/`.
-
-## ⚙️ 2. Service not starting
-**Cause:** `server.js` missing or Node path incorrect  
-**Fix
