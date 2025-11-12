@@ -1,21 +1,31 @@
-# vms-frontend-deploy
+# VMS Frontend Deploy 🚀
 
-Repo contains CI/CD and deployment utilities for the VMS frontend (Next.js standalone on IIS).
+A fully automated CI/CD setup for deploying a **Next.js standalone build** to a **Windows IIS server** using **GitHub Actions**, **NSSM**, **AWS SSM**, and **SonarQube** integration.
 
-## Quick summary
-- Build: Next.js standalone
-- Deploy: GitHub Actions -> SCP -> Windows host (IIS + NSSM)
-- Code quality: SonarQube, test coverage via `coverage/lcov.info`
-- Secrets: AWS SSM Parameter Store for production secrets
+## 📦 Overview
+This repository contains:
+- Automated build and deployment pipeline (GitHub Actions)
+- IIS + NSSM-based service configuration
+- Secure credential management via AWS SSM
+- SonarQube quality and coverage checks
+- GitLeaks for secret scanning
 
-## Requirements
-- Windows host with Node.js (LTS), NSSM, IIS with ARR + URL Rewrite
-- GitHub repository secrets configured (see `.github/WORKFLOW_SECRETS.md`)
+## 🧱 Stack
+- **Frontend Framework:** Next.js (Standalone output)
+- **Server:** IIS + Node (via NSSM)
+- **CI/CD:** GitHub Actions
+- **Security:** AWS SSM Parameter Store, GitLeaks
+- **Quality:** SonarQube integration
 
-## Local dev
-1. `npm install`
-2. `npm test -- --coverage` ⇒ produces `coverage/lcov.info`
-3. `npm run build`
+## 🌐 QA Environment
+| Component | Details |
+|------------|----------|
+| **URL** | [https://vmsqa-ver2-frontend.compunnel.com](https://vmsqa-ver2-frontend.compunnel.com) |
+| **Deployment** | GitHub Actions → Windows IIS Server |
+| **Build Command** | `npm run build` |
+| **Test Command** | `npm test -- --coverage` |
 
-## Deploy (CI)
-- Push to monitored branch triggers deploy pipeline. See `.github/workflows/deploy.yml`
+## 🔐 AWS SSM Parameters
+All credentials are stored in **AWS Systems Manager Parameter Store** — no credentials are kept in source code or web.config.
+
+Example:
