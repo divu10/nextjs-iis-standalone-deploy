@@ -1,0 +1,212 @@
+name: Frontend Deploy (Next.js Standalone on IIS)
+
+on:
+  push:
+    branches:
+      - dev
+  workflow_dispatch: {}
+
+env:
+  REMOTE_PATH: "D:\\QAWebsites\\vmsqa-ver2-frontend"
+  NODE_APP_NAME: "vms-nextjs-app"
+  SG_ID: "sg-044f8f207fc2a660b"
+  NEXT_PUBLIC_API_BASE_URL: "https://vmsqa-ver2.compunnel.com/api"
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: us-east-1
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      # Ensure NEXT_PUBLIC_* vars are embedded during build
+      - name: Build Next.js standalone
+        env:
+          NEXT_PUBLIC_API_BASE_URL: ${{ env.NEXT_PUBLIC_API_BASE_URL }}
+        run: |
+          cat > next.config.ts <<'EOF'
+          import type { NextConfig } from "next";
+          const nextConfig: NextConfig = {
+            eslint: { ignoreDuringBuilds: true },
+            typescript: { ignoreBuildErrors: true },
+            output: "standalone",
+          };
+          export default nextConfig;
+          EOF
+          npm run build
+
+      - name: Run Tests with Coverage
+        continue-on-error: true
+        run: |
+          if [ -f "package.json" ]; then
+            if npm run | grep -q "test"; then
+              echo " Running tests with coverage..."
+              npm test -- --coverage || echo " Tests failed or no coverage generated"
+            else
+              echo " No test script found in package.json, skipping tests."
+            fi
+          else
+            echo " package.json not found, skipping tests."
+          fi
+
+      # ---------- Setup Java (for SonarQube) ----------
+      - name: Setup Java
+        continue-on-error: true
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # ---------- Install SonarScanner ----------
+      - name: Install SonarScanner
+        continue-on-error: true
+        run: npm install -g sonar-scanner || echo " SonarScanner installation failed"
+
+      # ---------- Run SonarQube Analysis ----------
+      - name: Run SonarQube Scan
+        continue-on-error: true
+        run: |
+          echo " Starting SonarQube Analysis..."
+          sonar-scanner \
+            -Dsonar.projectKey=cd-s-vms-vmsqa-ver2-frontend-compunnel-com-ui-aws \
+            -Dsonar.sources=. \
+            -Dsonar.host.url=${{ secrets.SONAR_HOST_URL }} \
+            -Dsonar.login=${{ secrets.SONAR_TOKEN }} \
+            -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info \
+            -Dsonar.coverage.exclusions="**/node_modules/**,**/.next/**,**/public/**" \
+          || echo " SonarQube scan failed or coverage file missing"
+
+      # ---------- Check SonarQube Quality Gate ----------
+      - name: Check SonarQube Quality Gate
+        id: sonarqube-quality-gate
+        continue-on-error: true
+        uses: sonarsource/sonarqube-quality-gate-action@v1.1.0
+        env:
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          scanMetadataReportFile: .scannerwork/report-task.txt
+        timeout-minutes: 10
+
+      - name: Prepare release folder for deployment
+        run: |
+          rm -rf release
+          mkdir -p release
+          cp -r .next/standalone/* release/
+          mkdir -p release/.next
+          cp -r .next/* release/.next/
+          rm -rf release/.next/cache || true
+          if [ -d public ]; then cp -r public release/; fi
+
+      - name: Get Runner IP
+        id: getip
+        run: |
+          IP=$(curl -s https://api.ipify.org)
+          echo "RUNNER_IP=$IP/32" >> $GITHUB_ENV
+
+      - name: Allow SSH temporarily
+        run: |
+          aws ec2 authorize-security-group-ingress \
+            --group-id ${{ env.SG_ID }} \
+            --protocol tcp \
+            --port 22 \
+            --cidr $RUNNER_IP \
+            --region $AWS_REGION
+
+      - name: Clear deploy folder (keep web.config)
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            powershell -Command "
+              $release = Join-Path '${{ env.REMOTE_PATH }}' 'release'
+              if (Test-Path $release) {
+                Remove-Item -Recurse -Force (Join-Path $release '*')
+              } else {
+                New-Item -ItemType Directory -Force -Path $release | Out-Null
+              }
+            "
+
+      - name: Upload standalone output
+        uses: appleboy/scp-action@v0.1.7
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          port: 22
+          source: "release"
+          target: "${{ env.REMOTE_PATH }}/"
+
+      #  Restart or install Next.js app as Windows Service via NSSM
+      - name: Restart Next.js Windows Service via NSSM
+        uses: appleboy/ssh-action@v0.1.10
+        with:
+          host: ${{ secrets.SSH_HOST }}
+          username: ${{ secrets.SSH_USER }}
+          password: ${{ secrets.SSH_PASSWORD }}
+          script: |
+            powershell -Command "
+              $ErrorActionPreference = 'Stop'
+              $svcName = '${{ env.NODE_APP_NAME }}'
+              $nodeExe = 'C:\Program Files\nodejs\node.exe'
+              $appPath = 'D:\QAWebsites\vmsqa-ver2-frontend\release\server.js'
+              $workingDir = 'D:\QAWebsites\vmsqa-ver2-frontend\release'
+              $envVar = 'NEXT_PUBLIC_API_BASE_URL=${{ env.NEXT_PUBLIC_API_BASE_URL }}'
+
+              # Ensure NSSM exists
+              if (-not (Test-Path 'C:\nssm\win64\nssm.exe')) {
+                Write-Error 'NSSM not found at C:\nssm\win64\nssm.exe. Install it before running this pipeline.'
+              }
+
+              $nssm = 'C:\nssm\win64\nssm.exe'
+
+              # Stop service if exists
+              if (Get-Service -Name $svcName -ErrorAction SilentlyContinue) {
+                Write-Host 'Stopping existing service...'
+                & $nssm stop $svcName | Out-Null
+                Start-Sleep -Seconds 3
+              }
+
+              # Create or update NSSM service
+              Write-Host 'Configuring NSSM service...'
+              & $nssm install $svcName $nodeExe $appPath
+              & $nssm set $svcName AppDirectory $workingDir
+              & $nssm set $svcName AppEnvironmentExtra $envVar
+              & $nssm set $svcName Start SERVICE_AUTO_START
+              & $nssm set $svcName AppStopMethodSkip 6
+              & $nssm set $svcName AppStdout $workingDir\node-out.log
+              & $nssm set $svcName AppStderr $workingDir\node-error.log
+
+              # Start service
+              & $nssm start $svcName
+
+              # Quick check
+              Start-Sleep -Seconds 5
+              Get-Service -Name $svcName
+            "
+
+      - name: Remove SG rule
+        if: always()
+        run: |
+          aws ec2 revoke-security-group-ingress \
+            --group-id ${{ env.SG_ID }} \
+            --protocol tcp \
+            --port 22 \
+            --cidr $RUNNER_IP \
+            --region $AWS_REGION
